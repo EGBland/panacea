@@ -1,26 +1,9 @@
 from collections import namedtuple
-from anytree import RenderTree, Resolver, ResolverError, NodeMixin, LevelOrderIter
+from anytree import RenderTree, Resolver, ResolverError, NodeMixin, LevelOrderIter, ContStyle
 from pathoutil import *
 from os.path import splitext, basename
 import io
-
-FileHeader = namedtuple("FileHeader", ["name", "size", "datemodified", "offset"])
-DirectoryHeader = namedtuple("DirectoryHeader", ["name", "num_subdirs", "num_files"])
-
-class File(NodeMixin):
-    def __init__(self, name, size, datemodified, offset=None, parent=None):
-        self.name = name
-        self.size = size
-        self.datemodified = datemodified
-        self.offset = offset
-        self.parent = parent
-        self.data = None
-
-class Directory(NodeMixin):
-    def __init__(self, name, parent=None, children=None):
-        self.name = name
-        self.parent = parent
-
+from FileTree import *
 
 class VFS:
     # VFS files have a magic number in the first four bytes
@@ -31,6 +14,7 @@ class VFS:
         self.path = vfs_path
         self.name = basename(splitext(vfs_path)[0])
         self.resolver = Resolver("name")
+        self.mods = []
     
     ########## VFS reading functions ##########
 
@@ -113,7 +97,7 @@ class VFS:
     
     # print the directory tree
     def print_tree(self):
-        for pre, _, node in RenderTree(self.tree):
+        for pre, fill, node in RenderTree(self.tree, style=ContStyle()):
             print("%s%s" % (pre, node.name))
 
     # add a directory to the VFS
@@ -134,6 +118,9 @@ class VFS:
             raise Exception("Path %s is not a directory." % path)
         file_node = File(file_name, len(data), None)
     
+    def add_mod(self, mod):
+        self.mods.append(mod)
+    
 
     ########## VFS writing functions ##########
 
@@ -144,7 +131,8 @@ class VFS:
             write_int(fh, node.size)
             write_int(fh, cur_offset)
             write_filetime(fh, node.datemodified)
-            node.offset = cur_offset.value
+            node.offset = cur_offset
+            return cur_offset + node.size
         else:
             num_subdirs = len(list(filter(lambda x: isinstance(x, Directory), node.children)))
             num_files = len(node.children) - num_subdirs
@@ -154,6 +142,7 @@ class VFS:
                 write_int(fh, self._VFS_MAGIC_NUMBER)
             write_int(fh, num_subdirs)
             write_int(fh, num_files)
+            return cur_offset
 
     # write the tree to the VFS file
     def __save_headers(self, fh, tree, cur_offset):
@@ -163,39 +152,52 @@ class VFS:
         the_dirs = filter(lambda x: isinstance(x, Directory), tree.children)
         
         for file in the_files:
-            self.__write_header(fh, file, cur_offset)
-            cur_offset += file.size
+            cur_offset = self.__write_header(fh, file, cur_offset)
         
         for dir in the_dirs:
-            self.__save_headers(fh, dir, cur_offset)
+            cur_offset = self.__save_headers(fh, dir, cur_offset)
+        return cur_offset
 
     # save the (possibly modified) tree to a new VFS file
     def save(self, new_vfs_path="Modified.vfs"):
+        print("Loading mods...")
+        for mod in self.mods:
+            print(mod.name)
+            self.tree.merge(mod.tree)
+        self.print_tree()
+        print(self.get_headers_length())
         with open(new_vfs_path, "wb") as fh:
             print("Writing headers...")
-            self.__save_headers(fh, self.tree, MutableNum(self.get_headers_length()))
+            self.__save_headers(fh, self.tree, self.get_headers_length())
 
             print("Writing files... ", end="")
             files = list(filter(lambda x: isinstance(x, File), LevelOrderIter(self.tree)))
             files = sorted(files, key=lambda x: x.offset)
-            print("%04d/%04d" % (0, len(files)), end="")
+            print("%04d/%04d (%10d)" % (0, len(files), 0), end="")
 
             i = 0
             for f in files:
                 i += 1
-                print("\b\b\b\b\b\b\b\b\b%04d/%04d" % (i, len(files)), end="")
+                print(("\b"*22) + "%04d/%04d (%10d)" % (i, len(files), f.offset), end="")
                 # move caret to position, and add 00 up to that point if file is too small
                 caret = fh.seek(0, io.SEEK_END)
                 if(f.offset > caret):
                     diff = f.offset - caret
-                    fh.write([0] * diff)
+                    print("Buggered up by %d bytes" % diff)
+                    fh.write(bytes([0]*diff))
                 
                 # get file data from old VFS if not loaded
+                free_after = False
                 if not f.data:
                     with open(self.path, "rb") as vfs_fh:
                         vfs_fh.seek(f.offset)
                         f.data = vfs_fh.read(f.size)
+                        free_after = True
                 
-                # write the data to the new VFS
+                # write the data to the new VFS, then free the data
+                if len(f.data) != f.size:
+                    print("Discrepancy in file sizes for %s: %d / %d (%d)" % (f.name, len(f.data), f.size, abs(len(f.data)-f.size)))
                 fh.write(f.data)
+                if free_after:
+                    f.data = None
             print()

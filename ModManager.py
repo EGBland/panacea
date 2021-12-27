@@ -1,5 +1,5 @@
 from zipfile import ZipFile
-from anytree import Resolver
+from anytree import Resolver, ResolverError
 from FileTree import File, Directory
 from time import time
 import os.path
@@ -27,4 +27,13 @@ class Mod:
                 fh = archive.open(info.filename)
                 the_file.data = fh.read()
                 fh.close()
+
+    def get_dir(self, dir):
+        try:
+            return self.resolver.get(self.tree, dir)
+        except ResolverError:
+            return None
+
+    def get_vfses_to_modify(self, candidates):
+        return [x for x in candidates if self.get_dir(x)]
                 

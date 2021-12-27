@@ -9,6 +9,7 @@ class File(NodeMixin):
         self.name = name
         self.size = size
         self.datemodified = datemodified
+        self.old_offset = offset
         self.offset = offset
         self.parent = parent
         self.data = None

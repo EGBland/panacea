@@ -1,7 +1,9 @@
 from collections import namedtuple
 from anytree import RenderTree, Resolver, ResolverError, NodeMixin, LevelOrderIter, ContStyle
 from pathoutil import *
+import os
 from os.path import splitext, basename
+import os.path
 import io
 from FileTree import *
 
@@ -12,6 +14,7 @@ class VFS:
     # make a VFS object for the file at vfs_path
     def __init__(self, vfs_path):
         self.path = vfs_path
+        self.path_dir = os.path.split(vfs_path)[0]
         self.name = basename(splitext(vfs_path)[0])
         self.resolver = Resolver("name")
         self.mods = []
@@ -159,14 +162,16 @@ class VFS:
         return cur_offset
 
     # save the (possibly modified) tree to a new VFS file
-    def save(self, new_vfs_path="Modified.vfs"):
+    def save(self):
+        old_file_path = os.path.join(self.path_dir, self.name+".vfs.old")
+        if not os.path.exists(old_file_path):
+            os.rename(self.path, old_file_path)
         print("Loading mods...")
         for mod in self.mods:
             print(mod.name)
-            self.tree.merge(mod.tree)
-        self.print_tree()
+            self.tree.merge(mod.get_dir(self.name))
         print(self.get_headers_length())
-        with open(new_vfs_path, "wb") as fh:
+        with open(self.path, "wb") as fh:
             print("Writing headers...")
             self.__save_headers(fh, self.tree, self.get_headers_length())
 
@@ -189,8 +194,8 @@ class VFS:
                 # get file data from old VFS if not loaded
                 free_after = False
                 if not f.data:
-                    with open(self.path, "rb") as vfs_fh:
-                        vfs_fh.seek(f.offset)
+                    with open(old_file_path, "rb") as vfs_fh:
+                        vfs_fh.seek(f.old_offset)
                         f.data = vfs_fh.read(f.size)
                         free_after = True
                 
